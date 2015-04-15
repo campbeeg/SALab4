@@ -56,33 +56,44 @@ public class P2PMediator implements IP2PMediator {
 	Map<IHost, IStreamMonitor> hostToInStreamMonitor;
 	Map<Integer, IPacket> requestLog;
 	String rootDirectory;
-	
+
 	List<IDownloadListener> downloadListeners;
 	List<IListingListener> listingListeners;
 	List<IRequestLogListener> requestLogListeners;
 	List<IConnectionListener> connectionListeners;
 	List<IActivityListener> activityListeners;
-	
-	int sequence;
-	
+	List<IFindResultListener> findResultListeners;
 
-	public P2PMediator(int port, String rootDirectory) throws UnknownHostException {
+	int sequence;
+
+	public P2PMediator(int port, String rootDirectory)
+			throws UnknownHostException {
 		this.rootDirectory = rootDirectory;
 
-		this.localhost = new Host(InetAddress.getLocalHost().getHostAddress(), port);
-		this.hostToInStreamMonitor = Collections.synchronizedMap(new HashMap<IHost, IStreamMonitor>());
-		
-		this.requestLog = Collections.synchronizedMap(new HashMap<Integer, IPacket>());
-		
-		this.downloadListeners = Collections.synchronizedList(new ArrayList<IDownloadListener>());
-		this.listingListeners = Collections.synchronizedList(new ArrayList<IListingListener>());
-		this.requestLogListeners = Collections.synchronizedList(new ArrayList<IRequestLogListener>());
-		this.connectionListeners = Collections.synchronizedList(new ArrayList<IConnectionListener>());
-		this.activityListeners = Collections.synchronizedList(new ArrayList<IActivityListener>());
-		
+		this.localhost = new Host(InetAddress.getLocalHost().getHostAddress(),
+				port);
+		this.hostToInStreamMonitor = Collections
+				.synchronizedMap(new HashMap<IHost, IStreamMonitor>());
+
+		this.requestLog = Collections
+				.synchronizedMap(new HashMap<Integer, IPacket>());
+
+		this.downloadListeners = Collections
+				.synchronizedList(new ArrayList<IDownloadListener>());
+		this.listingListeners = Collections
+				.synchronizedList(new ArrayList<IListingListener>());
+		this.requestLogListeners = Collections
+				.synchronizedList(new ArrayList<IRequestLogListener>());
+		this.connectionListeners = Collections
+				.synchronizedList(new ArrayList<IConnectionListener>());
+		this.activityListeners = Collections
+				.synchronizedList(new ArrayList<IActivityListener>());
+		this.findResultListeners = Collections
+				.synchronizedList(new ArrayList<IFindResultListener>());
+
 		this.sequence = 0;
 	}
-	
+
 	public synchronized int newSequenceNumber() {
 		return ++this.sequence;
 	}
@@ -91,54 +102,56 @@ public class P2PMediator implements IP2PMediator {
 	public Host getLocalHost() {
 		return this.localhost;
 	}
-	
+
 	@Override
 	public String getRootDirectory() {
 		return this.rootDirectory;
 	}
-	
+
 	public void setConnected(IHost host, IStreamMonitor monitor) {
 		this.hostToInStreamMonitor.put(host, monitor);
 		this.fireConnected(host);
 	}
-	
-	
+
 	@Override
 	public boolean requestAttach(IHost remoteHost) throws P2PException {
-		synchronized(this.hostToInStreamMonitor) {
-			if(this.hostToInStreamMonitor.containsKey(remoteHost))
+		synchronized (this.hostToInStreamMonitor) {
+			if (this.hostToInStreamMonitor.containsKey(remoteHost))
 				return false;
-			
-			IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH, remoteHost.toString());
+
+			IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH,
+					remoteHost.toString());
 			sPacket.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			sPacket.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 			int seqNum = this.newSequenceNumber();
 			sPacket.setHeader(IProtocol.SEQ_NUM, seqNum + "");
-			
+
 			try {
 				this.logRequest(seqNum, sPacket);
-				
-				Socket socket = new Socket(remoteHost.getHostAddress(), remoteHost.getPort());
+
+				Socket socket = new Socket(remoteHost.getHostAddress(),
+						remoteHost.getPort());
 				sPacket.toStream(socket.getOutputStream());
-				
+
 				IPacket rPacket = new Packet();
 				rPacket.fromStream(socket.getInputStream());
-				if(rPacket.getCommand().equals(IProtocol.ATTACH_OK)) {
+				if (rPacket.getCommand().equals(IProtocol.ATTACH_OK)) {
 					// Connection accepted
-					IStreamMonitor monitor = new StreamMonitor(this, remoteHost, socket);
+					IStreamMonitor monitor = new StreamMonitor(this,
+							remoteHost, socket);
 					this.setConnected(remoteHost, monitor);
-					
-					// Let's start a thread for monitoring the input stream of this socket
+
+					// Let's start a thread for monitoring the input stream of
+					// this socket
 					Thread runner = new Thread(monitor);
 					runner.start();
-				}
-				else {
+				} else {
 					// Connection rejected
 					socket.close();
 				}
-			}
-			catch (Exception e) {
-				Logger.getGlobal().log(Level.SEVERE, "Could not establish connection!", e);
+			} catch (Exception e) {
+				Logger.getGlobal().log(Level.SEVERE,
+						"Could not establish connection!", e);
 				this.completeRequest(seqNum);
 				return false;
 			}
@@ -146,260 +159,287 @@ public class P2PMediator implements IP2PMediator {
 			return true;
 		}
 	}
-	
-	public void requestAttachOK(IHost remoteHost, Socket socket, int seqNum) throws P2PException {
-		IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH_OK, remoteHost.toString());
+
+	public void requestAttachOK(IHost remoteHost, Socket socket, int seqNum)
+			throws P2PException {
+		IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH_OK,
+				remoteHost.toString());
 		sPacket.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 		sPacket.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 		sPacket.setHeader(IProtocol.SEQ_NUM, seqNum + "");
-		
+
 		try {
 			sPacket.toStream(socket.getOutputStream());
-			
+
 			IStreamMonitor monitor = new StreamMonitor(this, remoteHost, socket);
 			this.setConnected(remoteHost, monitor);
-			
-			// Let's start a thread for monitoring the input stream of this socket
+
+			// Let's start a thread for monitoring the input stream of this
+			// socket
 			Thread runner = new Thread(monitor);
 			runner.start();
-		}
-		catch(Exception e) {
-			Logger.getGlobal().log(Level.SEVERE, "Could not send attach ok message to remote peer", e);
+		} catch (Exception e) {
+			Logger.getGlobal().log(Level.SEVERE,
+					"Could not send attach ok message to remote peer", e);
 		}
 	}
-	
-	public void requestAttachNOK(IHost remoteHost, Socket socket, int seqNum) throws P2PException {
-		IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH_NOK, remoteHost.toString());
+
+	public void requestAttachNOK(IHost remoteHost, Socket socket, int seqNum)
+			throws P2PException {
+		IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.ATTACH_NOK,
+				remoteHost.toString());
 		sPacket.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 		sPacket.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 		sPacket.setHeader(IProtocol.SEQ_NUM, seqNum + "");
-		
+
 		try {
 			sPacket.toStream(socket.getOutputStream());
 			socket.close();
-			Logger.getGlobal().log(Level.INFO, "Connection rejected to " + remoteHost);
-		}
-		catch(Exception e) {
-			Logger.getGlobal().log(Level.SEVERE, "Could not send attach ok message to remote peer", e);
+			Logger.getGlobal().log(Level.INFO,
+					"Connection rejected to " + remoteHost);
+		} catch (Exception e) {
+			Logger.getGlobal().log(Level.SEVERE,
+					"Could not send attach ok message to remote peer", e);
 		}
 	}
-	
 
 	@Override
 	public void requestDetach(IHost remoteHost) throws P2PException {
-		synchronized(this.hostToInStreamMonitor) {
-			if(!this.hostToInStreamMonitor.containsKey(remoteHost))
+		synchronized (this.hostToInStreamMonitor) {
+			if (!this.hostToInStreamMonitor.containsKey(remoteHost))
 				return;
-			
-			IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.DETACH, remoteHost.toString());
+
+			IPacket sPacket = new Packet(IProtocol.PROTOCOL, IProtocol.DETACH,
+					remoteHost.toString());
 			sPacket.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			sPacket.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
-			
-			IStreamMonitor monitor = this.hostToInStreamMonitor.remove(remoteHost);
+
+			IStreamMonitor monitor = this.hostToInStreamMonitor
+					.remove(remoteHost);
 			Socket socket = monitor.getSocket();
 			sPacket.toStream(monitor.getOutputStream());
-			
+
 			try {
 				socket.close();
-			}
-			catch(Exception e) {
-				Logger.getGlobal().log(Level.WARNING, "Error closing socket!", e);
+			} catch (Exception e) {
+				Logger.getGlobal().log(Level.WARNING, "Error closing socket!",
+						e);
 			}
 			this.fireDisconnected(remoteHost);
 		}
 	}
-	
+
 	@Override
 	public void requestList(IHost remoteHost) throws P2PException {
 		IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-		
-		if(monitor == null) {
+
+		if (monitor == null) {
 			throw new P2PException("No connection exists to " + remoteHost);
 		}
-		
+
 		int seqNum = this.newSequenceNumber();
-		IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.LIST, remoteHost.toString());
+		IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.LIST,
+				remoteHost.toString());
 		packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 		packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 		packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
-		
+
 		this.logRequest(seqNum, packet);
 		packet.toStream(monitor.getOutputStream());
 	}
-	
+
 	@Override
-	public void requestListing(IHost remoteHost, int seqNum) throws P2PException {
+	public void requestListing(IHost remoteHost, int seqNum)
+			throws P2PException {
 		IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-		
-		if(monitor == null) {
+
+		if (monitor == null) {
 			throw new P2PException("No connection exists to " + remoteHost);
 		}
-		
+
 		StringBuilder builder = new StringBuilder();
 		File dir = new File(this.getRootDirectory());
-		for(File f: dir.listFiles()) {
-			if(f.isFile()) {
+		for (File f : dir.listFiles()) {
+			if (f.isFile()) {
 				builder.append(f.getName());
 				builder.append(IProtocol.CRLF);
 			}
 		}
-		
+
 		try {
 			byte[] payload = builder.toString().getBytes(IProtocol.CHAR_SET);
-			
-			IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.LISTING, remoteHost.toString());
+
+			IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.LISTING,
+					remoteHost.toString());
 			packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 			packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 			packet.setHeader(IProtocol.PAYLOAD_SIZE, payload.length + "");
-			
+
 			OutputStream out = monitor.getOutputStream();
 			packet.toStream(out);
 			out.write(payload);
-		}
-		catch(Exception e) {
+		} catch (Exception e) {
 			throw new P2PException(e);
 		}
-	}	
+	}
 	
+	public void requestGetFromAnyHost(IHost remoteHost, String file) throws P2PException {
+		IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
+
+		if (monitor == null) {
+			this.requestAttach(remoteHost);
+		}
+		this.requestGet(remoteHost, file);
+	}
+
 	@Override
 	public void requestGet(IHost remoteHost, String file) throws P2PException {
 		IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-		
-		if(monitor == null) {
+
+		if (monitor == null) {
 			throw new P2PException("No connection exists to " + remoteHost);
 		}
-		
+
 		int seqNum = this.newSequenceNumber();
-		IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.GET, remoteHost.toString());
+		IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.GET,
+				remoteHost.toString());
 		packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 		packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 		packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 		packet.setHeader(IProtocol.FILE_NAME, file);
-		
+
 		this.logRequest(seqNum, packet);
 		packet.toStream(monitor.getOutputStream());
 	}
-	
+
 	@Override
-	public void requestPut(IHost remoteHost, String file, int seqNum) throws P2PException {
+	public void requestPut(IHost remoteHost, String file, int seqNum)
+			throws P2PException {
 		IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-		
-		if(monitor == null) {
+
+		if (monitor == null) {
 			throw new P2PException("No connection exists to " + remoteHost);
 		}
-		
-		File fileObj = new File(this.getRootDirectory() + IProtocol.FILE_SEPERATOR + file);
-		
+
+		File fileObj = new File(this.getRootDirectory()
+				+ IProtocol.FILE_SEPERATOR + file);
+
 		IPacket packet = null;
-		if(fileObj.exists() && fileObj.isFile()) {
-			packet = new Packet(IProtocol.PROTOCOL, IProtocol.PUT, remoteHost.toString());
+		if (fileObj.exists() && fileObj.isFile()) {
+			packet = new Packet(IProtocol.PROTOCOL, IProtocol.PUT,
+					remoteHost.toString());
 			packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 			packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 			packet.setHeader(IProtocol.FILE_NAME, file);
 			packet.setHeader(IProtocol.PAYLOAD_SIZE, fileObj.length() + "");
-		}
-		else {
-			packet = new Packet(IProtocol.PROTOCOL, IProtocol.GET_NOK, remoteHost.toString());
+		} else {
+			packet = new Packet(IProtocol.PROTOCOL, IProtocol.GET_NOK,
+					remoteHost.toString());
 			packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 			packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 			packet.setHeader(IProtocol.FILE_NAME, file);
 		}
-		
+
 		packet.toStream(monitor.getOutputStream());
 	}
-	
 
 	@Override
 	public void discover(int depth) throws P2PException {
 		// TODO: Complete the implementation
 	}
 
-	
 	@Override
-	public void sendFindRequest(String searchTerm, int depth, IHost originator) throws P2PException {
-		//Note for the peer that is starting the search request, originator is equal to localhost.
+	public void sendFindRequest(String searchTerm, int depth, IHost originator)
+			throws P2PException {
+		// Note for the peer that is starting the search request, originator is
+		// equal to localhost.
 		Collection<IHost> hosts = this.hostToInStreamMonitor.keySet();
-		
+
 		int seqNum = this.newSequenceNumber();
 
-		for(IHost remoteHost: hosts) {
-			IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.FIND, remoteHost.toString());
+		for (IHost remoteHost : hosts) {
+			IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.FIND,
+					remoteHost.toString());
 			packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
 			packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 			packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 			packet.setHeader(IProtocol.DEPTH, depth + "");
 			packet.setHeader(IProtocol.SEARCH_TERM, searchTerm);
-			packet.setHeader(IProtocol.ORIGINATOR_HOST, originator.getHostAddress());
-			packet.setHeader(IProtocol.ORIGINATOR_PORT, originator.getPort() + "");
-			
-			
+			packet.setHeader(IProtocol.ORIGINATOR_HOST,
+					originator.getHostAddress());
+			packet.setHeader(IProtocol.ORIGINATOR_PORT, originator.getPort()
+					+ "");
+
 			this.logRequest(seqNum, packet);
 
 			IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-			
-			if(monitor == null) {
+
+			if (monitor == null) {
 				throw new P2PException("No connection exists to " + remoteHost);
 			}
-			packet.toStream(monitor.getOutputStream());		
+			packet.toStream(monitor.getOutputStream());
 		}
 	}
-	
-	
+
 	@Override
-	public void sendFindResult(IHost remoteHost, String searchTerm, int depth, int seqNum) throws P2PException {
+	public void sendFindResult(IHost remoteHost, String searchTerm, int depth,
+			int seqNum) throws P2PException {
 		// NOTE: The remoteHost here is the host that originated the request
-		
+
 		StringBuilder builder = new StringBuilder();
 		File dir = new File(this.getRootDirectory());
-		for(File f: dir.listFiles()) {
-			if(f.isFile()) {
-				// TODO: More work to match file pattern with the searchTerm
-				builder.append(f.getName());
-				builder.append(IProtocol.CRLF);
+		for (File f : dir.listFiles()) {
+			if (f.isFile()) {
+				if (f.getName().equals(searchTerm)) {
+					builder.append(f.getName());
+					builder.append(IProtocol.CRLF);
+				}
 			}
 		}
-		
+
 		try {
 			byte[] payload = builder.toString().getBytes(IProtocol.CHAR_SET);
-			
-			if(payload.length > 0) {
-				IPacket packet = new Packet(IProtocol.PROTOCOL, IProtocol.FIND_RESULT, remoteHost.toString());
-				packet.setHeader(IProtocol.HOST, this.localhost.getHostAddress());
+
+			if (payload.length > 0) {
+				IPacket packet = new Packet(IProtocol.PROTOCOL,
+						IProtocol.FIND_RESULT, remoteHost.toString());
+				packet.setHeader(IProtocol.HOST,
+						this.localhost.getHostAddress());
 				packet.setHeader(IProtocol.PORT, this.localhost.getPort() + "");
 				packet.setHeader(IProtocol.SEQ_NUM, seqNum + "");
 				packet.setHeader(IProtocol.PAYLOAD_SIZE, payload.length + "");
-				
-				IStreamMonitor monitor = this.hostToInStreamMonitor.get(remoteHost);
-				
-				if(monitor == null) {
+
+				IStreamMonitor monitor = this.hostToInStreamMonitor
+						.get(remoteHost);
+
+				if (monitor == null) {
 					this.requestAttach(remoteHost);
 
 					monitor = this.hostToInStreamMonitor.get(remoteHost);
-					if(monitor == null) {
+					if (monitor == null) {
 						throw new P2PException();
 					}
 				}
-				
+
 				OutputStream out = monitor.getOutputStream();
 				packet.toStream(out);
 				out.write(payload);
 			}
-		}
-		catch(Exception e) {
+		} catch (Exception e) {
 			throw new P2PException(e);
 		}
-		
+
 		// Forward the packet to all of the connected peers
 		depth = depth - 1;
-		if(depth > 0) {
+		if (depth > 0) {
 			// Overloaded version
 			this.sendFindRequest(searchTerm, depth, remoteHost);
 		}
 	}
-	
+
 	@Override
 	public IPacket getRequest(int number) {
 		return this.requestLog.get(number);
@@ -410,13 +450,12 @@ public class P2PMediator implements IP2PMediator {
 		this.requestLog.put(number, p);
 		this.fireRequestLogChanged();
 	}
-	
 
 	@Override
 	public void completeRequest(int number) {
 		IPacket p = this.requestLog.remove(number);
-		
-		if(p != null)
+
+		if (p != null)
 			this.fireRequestLogChanged();
 	}
 
@@ -426,55 +465,54 @@ public class P2PMediator implements IP2PMediator {
 	public void addDownloadListener(IDownloadListener l) {
 		this.downloadListeners.add(l);
 	}
-	
+
 	@Override
 	public void addListingListener(IListingListener l) {
 		this.listingListeners.add(l);
 	}
-	
+
 	@Override
 	public void addRequestLogListener(IRequestLogListener l) {
 		this.requestLogListeners.add(l);
 	}
-	
+
 	@Override
 	public void addConnectionListener(IConnectionListener l) {
 		this.connectionListeners.add(l);
 	}
-	
+
 	@Override
 	public void addActivityListener(IActivityListener l) {
 		this.activityListeners.add(l);
 	}
-	
+
 	@Override
 	public void addFindResultListener(IFindResultListener gui) {
-		// TODO
+		this.findResultListeners.add(gui);
 	}
-	
-	
+
 	@Override
 	public void fireConnected(IHost host) {
-		synchronized(this.connectionListeners) {
-			for(IConnectionListener c: this.connectionListeners) {
+		synchronized (this.connectionListeners) {
+			for (IConnectionListener c : this.connectionListeners) {
 				c.connectionEstablished(host);
 			}
 		}
 	}
-	
+
 	@Override
 	public void fireDisconnected(IHost host) {
-		synchronized(this.connectionListeners) {
-			for(IConnectionListener c: this.connectionListeners) {
+		synchronized (this.connectionListeners) {
+			for (IConnectionListener c : this.connectionListeners) {
 				c.connectionTerminated(host);
 			}
 		}
 	}
-	
+
 	@Override
 	public void fireDownloadComplete(IHost host, String file) {
-		synchronized(this.downloadListeners) {
-			for(IDownloadListener d: this.downloadListeners) {
+		synchronized (this.downloadListeners) {
+			for (IDownloadListener d : this.downloadListeners) {
 				d.downloadComplete(host, file);
 			}
 		}
@@ -482,32 +520,36 @@ public class P2PMediator implements IP2PMediator {
 
 	@Override
 	public void fireListingReceived(IHost host, List<String> listing) {
-		synchronized(this.listingListeners) {
-			for(IListingListener l: this.listingListeners) {
+		synchronized (this.listingListeners) {
+			for (IListingListener l : this.listingListeners) {
 				l.listingReceived(host, listing);
 			}
 		}
 	}
-	
+
 	@Override
 	public void fireFindResultFound(IHost remoteHost, List<String> listing) {
-		// TODO ... Add the code similar to fireListingReceived
-	}
-	
-	
-	@Override
-	public void fireRequestLogChanged() {
-		synchronized(this.requestLogListeners) {
-			for(IRequestLogListener l: this.requestLogListeners) {
-				l.requestLogChanged(Collections.unmodifiableCollection(this.requestLog.values()));
+		synchronized (this.findResultListeners) {
+			for (IFindResultListener l : this.findResultListeners) {
+				l.findResultReceived(remoteHost, listing);
 			}
 		}
-	}	
-	
+	}
+
+	@Override
+	public void fireRequestLogChanged() {
+		synchronized (this.requestLogListeners) {
+			for (IRequestLogListener l : this.requestLogListeners) {
+				l.requestLogChanged(Collections
+						.unmodifiableCollection(this.requestLog.values()));
+			}
+		}
+	}
+
 	@Override
 	public void fireActivityPerformed(String message, IPacket p) {
-		synchronized(this.activityListeners) {
-			for(IActivityListener l: this.activityListeners) {
+		synchronized (this.activityListeners) {
+			for (IActivityListener l : this.activityListeners) {
 				l.activityPerformed(message, p);
 			}
 		}

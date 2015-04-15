@@ -60,6 +60,8 @@ public interface IP2PMediator {
 	
 	public void requestGet(IHost host, String file) throws P2PException;
 	public void requestPut(IHost remoteHost, String file, int seqNum) throws P2PException;
+	public void requestGetFromAnyHost(IHost remoteHost, String file) throws P2PException;
+	
 	
 	public void addDownloadListener(IDownloadListener l);
 	public void addListingListener(IListingListener l);
